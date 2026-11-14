@@ -1,7 +1,7 @@
 .PHONY: apk
 apk:
 	./scripts/rebrand.sh
-	./gradlew --offline assembleGplayRelease
+	./gradlew --offline assembleFossRelease
 	./scripts/undo_rebrand.sh
 
 .PHONY: aab
@@ -20,11 +20,11 @@ foss:
 
 .PHONY: install
 install:
-	adb -d install -r build/outputs/apk/gplay/release/*universal*.apk
+	adb -d install -r build/outputs/apk/foss/release/*.apk
 
 .PHONY: emulator-install
 emulator-install:
-	adb install -r build/outputs/apk/gplay/release/*universal*.apk
+	adb install -r build/outputs/apk/foss/release/*.apk
 
 .PHONY: fetch
 fetch:

@@ -14,7 +14,7 @@ jobs:
       - id: check-tag
         run: |
           if [[ "${{ github.event.ref }}" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+.*$ ]]; then
-              echo ::set-output name=match::true
+              echo "match=true" >> "$GITHUB_OUTPUT"
           fi
 
   build:
@@ -41,34 +41,31 @@ jobs:
         with:
           ndk-version: "r29"
 
-      - name: Compile core
+      - name: Compile core (arm64-v8a only)
         env:
           ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: |
           export PATH="${PATH}:${ANDROID_NDK_ROOT}/toolchains/llvm/prebuilt/linux-x86_64/bin/:${ANDROID_NDK_ROOT}"
-          ./scripts/install-toolchains.sh && ./scripts/ndk-make.sh
+          ./scripts/install-toolchains.sh && ./scripts/ndk-make.sh arm64-v8a
 
-      - name: Build APK
+      - name: Build APK (foss / arm64-v8a only)
         run: |
           mkdir -p ~/.gradle
           echo -n ${{ secrets.KEYSTORE_FILE }} | base64 -d >> ~/keystore.jks
           echo "DC_RELEASE_STORE_FILE=$HOME/keystore.jks" >> ~/.gradle/gradle.properties
           echo "DC_RELEASE_STORE_PASSWORD=${{ secrets.KEYSTORE_PASSWORD }}" >> ~/.gradle/gradle.properties
           echo "DC_RELEASE_KEY_ALIAS_FDROID=${{ secrets.ALIAS_FDROID }}" >> ~/.gradle/gradle.properties
-          echo "DC_RELEASE_KEY_ALIAS_GPLAY=${{ secrets.ALIAS_GPLAY }}" >> ~/.gradle/gradle.properties
           echo "DC_RELEASE_KEY_PASSWORD=${{ secrets.KEYSTORE_PASSWORD }}" >> ~/.gradle/gradle.properties
-          mkdir dist
-          for abi in armeabi-v7a arm64-v8a x86 x86_64; do ./gradlew -PABI_FILTER=$abi assembleFossRelease; mv build/outputs/apk/foss/release/*.apk dist/; done
+          mkdir -p dist
+          ./gradlew -PABI_FILTER=arm64-v8a assembleFossRelease
+          mv build/outputs/apk/foss/release/*.apk dist/
           mv build/outputs/mapping/fossRelease/mapping.txt dist/mapping-foss.txt
-          ./gradlew assembleGplayRelease
-          mv build/outputs/apk/gplay/release/*universal*.apk dist/ArcaneChat-gplay.apk
-          mv build/outputs/mapping/gplayRelease/mapping.txt dist/mapping-gplay.txt
 
       - name: Release on GitHub
         uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
         with:
           token: "${{ secrets.GITHUB_TOKEN }}"
-          body: '[<img src="store/get-it-on-gplay.png" alt="Get it on Google Play" height="48">](https://play.google.com/store/apps/details?id=com.github.arcanechat) [<img src="store/get-it-on-fdroid.png" alt="Get it on F-Droid" height="48">](https://f-droid.org/packages/chat.delta.lite) [<img src="store/get-it-on-github.png" alt="Get it on GitHub" height="48">](https://github.com/ArcaneChat/android/releases/latest/download/ArcaneChat-gplay.apk)'
+          body: 'AwkMail ${{ github.ref_name }}（仅支持 arm64-v8a 设备）· [下载 APK](${{ github.server_url }}/${{ github.repository }}/releases/latest)'
           prerelease: ${{ contains(github.event.ref, '-beta') }}
           fail_on_unmatched_files: true
           files: |

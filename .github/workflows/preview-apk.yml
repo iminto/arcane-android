@@ -80,7 +80,7 @@ jobs:
         if: github.event.pull_request.head.repo.full_name == github.repository
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: app-preview.apk
+          name: AwkMail-preview.apk
           path: 'build/outputs/apk/foss/debug/*.apk'
 
       - name: Add artifact links to PR
@@ -95,5 +95,5 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
-              body: `**To test the changes in this pull request, install this apk:**\n\n[📦 app-preview.apk](${url})`,
+              body: `**To test the changes in this pull request, install this apk:**\n\n[📦 AwkMail-preview.apk](${url})`,
             });

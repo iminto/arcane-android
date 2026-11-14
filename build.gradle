@@ -4,6 +4,15 @@ plugins {
     id 'com.diffplug.spotless' version '8.10.0'
 }
 
+// ===== 打包配置：改这两行即可 =====
+// 应用显示名，同时也是 APK 文件名前缀
+project.ext.set("APP_NAME", "AwkMail")
+// 只打包 arm64-v8a；CI 的模拟器测试可用 -PABI_FILTER=x86_64 临时覆盖
+project.ext.set("TARGET_ABI", "arm64-v8a")
+if(project.hasProperty("ABI_FILTER")) {
+    project.ext.set("TARGET_ABI", ABI_FILTER)
+}
+
 repositories {
     google()
     mavenCentral()
@@ -40,7 +49,7 @@ android {
         versionCode 30000758
         versionName "2.69.0"
 
-        applicationId "chat.delta.lite"
+        applicationId "com.example.maila"
         multiDexEnabled true
 
         minSdkVersion 21
@@ -48,19 +57,15 @@ android {
 
         vectorDrawables.useSupportLibrary = true
 
-        // base name of the generated apk
-        project.ext.set("archivesBaseName", "deltachat");
+        // base name of the generated apk / bundle
+        project.ext.set("archivesBaseName", project.APP_NAME);
 
         buildConfigField "boolean", "DEV_BUILD", "false"
 
         ndk {
-            if(project.hasProperty("ABI_FILTER")) {
-                abiFilters ABI_FILTER
-            } else {
-                abiFilters "armeabi-v7a", "arm64-v8a", "x86", "x86_64"
-            }
+            // 只打包 TARGET_ABI，其它架构的 .so 不会进入 APK
+            abiFilters project.TARGET_ABI
         }
-
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         testInstrumentationRunnerArguments useTestStorageService: 'true', clearPackageData: 'true'
@@ -142,7 +147,7 @@ android {
             dimension "none"
             apply plugin: "com.google.gms.google-services"
             buildConfigField "boolean", "USE_PLAY_SERVICES", "true"
-            applicationId "com.github.arcanechat"
+            // applicationId 继承 defaultConfig 的 com.example.maila
         }
     }
 
@@ -171,42 +176,17 @@ android {
         }
     }
 
-    if(!project.hasProperty("ABI_FILTER")) {
-        splits {
-            abi {
-                enable true
-                reset()
-                include "armeabi-v7a", "arm64-v8a", "x86", "x86_64"
-                universalApk true
-            }
-        }
-    }
-
+    // 不再启用 ABI splits：每个构建变体只产出一个 <APP_NAME>-<TARGET_ABI>-<versionName>.apk
     project.ext.versionCodes = ['armeabi-v7a': 1, 'arm64-v8a': 2, 'x86': 3, 'x86_64': 4]
 
     androidComponents {
         onVariants(selector().all()) { variant ->
             variant.outputs.each { output ->
-                def apkSuffix = "-${output.versionName.get()}.apk"
                 def vCode = output.versionCode.get()
-                def abiFilter = output.filters.find {
-                    it.filterType == com.android.build.api.variant.FilterConfiguration.FilterType.ABI
-                }
-                def abiName = abiFilter ? abiFilter.identifier : null
-                if(project.hasProperty("ABI_FILTER")) {
-                    output.versionCode.set(vCode * 10 + project.ext.versionCodes.get(ABI_FILTER))
-                    apkSuffix = "-${ABI_FILTER}" + apkSuffix
-                } else if (abiName != null && project.ext.versionCodes.containsKey(abiName)) {
-                    output.versionCode.set(vCode * 10 + project.ext.versionCodes.get(abiName))
-                } else {
-                    output.versionCode.set(vCode * 10 + 4)
-                }
-                output.outputFileName.set(
-                        output.outputFileName.get()
-                        .replace("android", "ArcaneChat")
-                        .replace("-release", "")
-                        .replace(".apk", apkSuffix)
-                        )
+                def abiCode = project.ext.versionCodes.get(project.TARGET_ABI) ?: 4
+                output.versionCode.set(vCode * 10 + abiCode)
+                def apkName = "${project.APP_NAME}-${project.TARGET_ABI}-${output.versionName.get()}.apk"
+                output.outputFileName.set(apkName.toString())
             }
         }
     }
