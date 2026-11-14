@@ -4,17 +4,35 @@ on:
   push:
     tags:
       - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version_tag:
+        description: 'Release tag, e.g. v2.69.0 (should match versionName in build.gradle)'
+        required: true
+        type: string
+
+permissions: {}
 
 jobs:
   check:
     runs-on: ubuntu-latest
     outputs:
       match: ${{ steps.check-tag.outputs.match }}
+      tag: ${{ steps.check-tag.outputs.tag }}
     steps:
       - id: check-tag
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_REF: ${{ github.event.ref }}
+          INPUT_TAG: ${{ github.event.inputs.version_tag || '' }}
         run: |
-          if [[ "${{ github.event.ref }}" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+.*$ ]]; then
-              echo "match=true" >> "$GITHUB_OUTPUT"
+          ref="$EVENT_REF"
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            ref="refs/tags/$INPUT_TAG"
+          fi
+          if [[ "$ref" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+.*$ ]]; then
+            echo "match=true" >> "$GITHUB_OUTPUT"
+            echo "tag=${ref#refs/tags/}" >> "$GITHUB_OUTPUT"
           fi
 
   build:
@@ -22,13 +40,15 @@ jobs:
     if: needs.check.outputs.match == 'true'
     name: Upload Release APK
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           submodules: recursive
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
-          working-directory: jni/deltachat-core-rust
+          workspaces: jni/deltachat-core-rust
       - uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
         with:
           java-version: 17
@@ -49,24 +69,56 @@ jobs:
           ./scripts/install-toolchains.sh && ./scripts/ndk-make.sh arm64-v8a
 
       - name: Build APK (foss / arm64-v8a only)
+        env:
+          KEYSTORE_FILE: ${{ secrets.KEYSTORE_FILE }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS_FDROID: ${{ secrets.ALIAS_FDROID }}
         run: |
+          set -euo pipefail
           mkdir -p ~/.gradle
-          echo -n ${{ secrets.KEYSTORE_FILE }} | base64 -d >> ~/keystore.jks
-          echo "DC_RELEASE_STORE_FILE=$HOME/keystore.jks" >> ~/.gradle/gradle.properties
-          echo "DC_RELEASE_STORE_PASSWORD=${{ secrets.KEYSTORE_PASSWORD }}" >> ~/.gradle/gradle.properties
-          echo "DC_RELEASE_KEY_ALIAS_FDROID=${{ secrets.ALIAS_FDROID }}" >> ~/.gradle/gradle.properties
-          echo "DC_RELEASE_KEY_PASSWORD=${{ secrets.KEYSTORE_PASSWORD }}" >> ~/.gradle/gradle.properties
+          rm -f "$HOME/keystore.jks"
+
+          # Fork 默认不继承上游的 Secrets；没有签名配置时用 CI 临时密钥，保证 APK 可安装。
+          if [ -n "$KEYSTORE_FILE" ] && [ -n "$KEYSTORE_PASSWORD" ]; then
+            printf '%s' "$KEYSTORE_FILE" | base64 -d > "$HOME/keystore.jks"
+            STORE_PASSWORD="$KEYSTORE_PASSWORD"
+            KEY_PASSWORD="$KEYSTORE_PASSWORD"
+            KEY_ALIAS="${KEY_ALIAS_FDROID:-awkmail}"
+          else
+            echo "::warning::未配置 KEYSTORE_FILE / KEYSTORE_PASSWORD / ALIAS_FDROID，本次使用 CI 临时生成的签名密钥。APK 可安装，但每次构建签名不同，无法覆盖升级；建议在仓库 Settings → Secrets and variables → Actions 中配置这三个 Secret。"
+            STORE_PASSWORD="awkmail-ci-key"
+            KEY_PASSWORD="awkmail-ci-key"
+            KEY_ALIAS="awkmail"
+            "$JAVA_HOME/bin/keytool" -genkeypair \
+              -alias "$KEY_ALIAS" -keyalg RSA -keysize 2048 -validity 10000 \
+              -keystore "$HOME/keystore.jks" \
+              -storepass "$STORE_PASSWORD" -keypass "$KEY_PASSWORD" \
+              -dname "CN=AwkMail, OU=AwkMail, O=AwkMail, L=Unknown, ST=Unknown, C=CN" > /dev/null 2>&1
+          fi
+
+          # build.gradle 会在配置阶段读取 releaseApk 的所有属性，少写一个就会直接报错。
+          {
+            echo "DC_RELEASE_STORE_FILE=$HOME/keystore.jks"
+            echo "DC_RELEASE_STORE_PASSWORD=$STORE_PASSWORD"
+            echo "DC_RELEASE_KEY_ALIAS_FDROID=$KEY_ALIAS"
+            echo "DC_RELEASE_KEY_ALIAS_GPLAY=$KEY_ALIAS"
+            echo "DC_RELEASE_KEY_PASSWORD=$KEY_PASSWORD"
+          } >> ~/.gradle/gradle.properties
+
           mkdir -p dist
           ./gradlew -PABI_FILTER=arm64-v8a assembleFossRelease
           mv build/outputs/apk/foss/release/*.apk dist/
-          mv build/outputs/mapping/fossRelease/mapping.txt dist/mapping-foss.txt
+          if [ -f build/outputs/mapping/fossRelease/mapping.txt ]; then
+            mv build/outputs/mapping/fossRelease/mapping.txt dist/mapping-foss.txt
+          fi
 
       - name: Release on GitHub
         uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
         with:
           token: "${{ secrets.GITHUB_TOKEN }}"
-          body: 'AwkMail ${{ github.ref_name }}（仅支持 arm64-v8a 设备）· [下载 APK](${{ github.server_url }}/${{ github.repository }}/releases/latest)'
-          prerelease: ${{ contains(github.event.ref, '-beta') }}
+          tag_name: ${{ needs.check.outputs.tag }}
+          body: 'AwkMail ${{ needs.check.outputs.tag }}（仅支持 arm64-v8a 设备）· [下载 APK](${{ github.server_url }}/${{ github.repository }}/releases/latest)'
+          prerelease: ${{ contains(needs.check.outputs.tag, '-beta') }}
           fail_on_unmatched_files: true
           files: |
             dist/*

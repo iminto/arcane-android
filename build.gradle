@@ -124,7 +124,8 @@ android {
             if(project.hasProperty("DC_RELEASE_STORE_FILE")) {
                 storeFile file(DC_RELEASE_STORE_FILE)
                 storePassword DC_RELEASE_STORE_PASSWORD
-                keyAlias DC_RELEASE_KEY_ALIAS_GPLAY
+                // 只打 foss 包时也可能没有 gplay 的 alias；配置阶段不能因为缺这个属性就整个构建失败。
+                keyAlias (project.findProperty("DC_RELEASE_KEY_ALIAS_GPLAY") ?: project.findProperty("DC_RELEASE_KEY_ALIAS_FDROID") ?: "").toString()
                 keyPassword DC_RELEASE_KEY_PASSWORD
             }
         }
